@@ -3,6 +3,7 @@ import json
 import os
 import re
 import urllib.parse
+import urllib.error
 import urllib.request
 
 SEEN_FILE = "seen.json"
@@ -23,14 +24,52 @@ def fetch(url, extra_headers=None):
         return r.read().decode("utf-8")
 
 
-def send(text):
+def gh_error(msg):
+    # shows up as an annotation on the GitHub run page
+    print("::error::" + str(msg).replace("\n", " | ")[:900], flush=True)
+
+
+def send(text, tries=4):
+    """Send a Telegram message. Returns True on success, never raises."""
+    import time
     data = urllib.parse.urlencode({
         "chat_id": CHAT_ID,
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": "true",
     }).encode()
-    urllib.request.urlopen(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data=data, timeout=30)
+    for attempt in range(tries):
+        try:
+            urllib.request.urlopen(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data=data, timeout=30)
+            time.sleep(1.1)  # stay under Telegram's ~1 message/second limit
+            return True
+        except urllib.error.HTTPError as err:
+            body = err.read().decode("utf-8", "replace")
+            wait = 5
+            try:
+                wait = json.loads(body).get("parameters", {}).get("retry_after", 5)
+            except Exception:
+                pass
+            if err.code == 429 and attempt < tries - 1:
+                time.sleep(wait + 1)
+                continue
+            if err.code == 400 and "parse" in body and attempt < tries - 1:
+                # bad formatting: resend as plain text
+                data = urllib.parse.urlencode({
+                    "chat_id": CHAT_ID,
+                    "text": re.sub(r"<[^>]+>", "", html.unescape(text)),
+                    "disable_web_page_preview": "true",
+                }).encode()
+                continue
+            gh_error(f"Telegram send failed: HTTP {err.code} {body[:300]}")
+            return False
+        except Exception as err:
+            if attempt < tries - 1:
+                time.sleep(3)
+                continue
+            gh_error(f"Telegram send failed: {err!r}")
+            return False
+    return False
 
 
 def money(x):
@@ -162,40 +201,58 @@ def load_state():
     return data
 
 
+def cid(c):
+    return str(c.get("id") or c.get("_id"))
+
+
+def check_site(state, key, name, get_list, fmt):
+    site = state.setdefault(key, {"seen": None, "fails": 0})
+    try:
+        challenges = get_list()
+    except Exception as err:
+        site["fails"] = site.get("fails", 0) + 1
+        gh_error(f"{name}: failed ({site['fails']} in a row): {err!r}")
+        if site["fails"] == FAIL_ALERT_AFTER:
+            send(f"⚠️ Can't reach {name} challenges right now ({e(str(err))[:200]}). "
+                 "I'll keep trying and tell you when it works again.")
+        return
+
+    if site.get("fails", 0) >= FAIL_ALERT_AFTER:
+        send(f"✅ {name} challenges are reachable again.")
+    site["fails"] = 0
+
+    ids = [cid(c) for c in challenges]
+    if site.get("seen") is None:
+        # first time watching this site: remember what's there, don't spam
+        if send(f"✅ Now watching {name}: {len(ids)} active challenges. "
+                "You'll get a message when a new one is added."):
+            site["seen"] = ids
+        return
+
+    new = [c for c in challenges if cid(c) not in site["seen"]]
+    sent = 0
+    for c in reversed(new):
+        try:
+            text = fmt(c)
+        except Exception as err:
+            gh_error(f"{name}: couldn't format challenge {cid(c)}: {err!r}")
+            text = f"🆕 New {name} challenge (details unavailable)"
+        if send(text):
+            site["seen"].insert(0, cid(c))   # only mark seen once delivered
+            sent += 1
+    site["seen"] = site["seen"][:1000]
+    print(f"{name}: {len(new)} new, {sent} sent")
+
+
 def main():
     state = load_state()
-
     for key, (name, get_list, fmt) in SITES.items():
-        site = state.setdefault(key, {"seen": None, "fails": 0})
         try:
-            challenges = get_list()
+            check_site(state, key, name, get_list, fmt)
         except Exception as err:
-            site["fails"] = site.get("fails", 0) + 1
-            print(f"{name}: failed ({site['fails']} in a row): {err}")
-            if site["fails"] == FAIL_ALERT_AFTER:
-                send(f"⚠️ Can't reach {name} challenges right now ({e(str(err))[:200]}). "
-                     "I'll keep trying and tell you when it works again.")
-            continue
-
-        if site.get("fails", 0) >= FAIL_ALERT_AFTER:
-            send(f"✅ {name} challenges are reachable again.")
-        site["fails"] = 0
-
-        ids = [str(c["id"]) for c in challenges]
-        if site.get("seen") is None:
-            # first time watching this site: remember what's there, don't spam
-            send(f"✅ Now watching {name}: {len(ids)} active challenges. "
-                 "You'll get a message when a new one is added.")
-            site["seen"] = ids
-            continue
-
-        new = [c for c in challenges if str(c["id"]) not in site["seen"]]
-        for c in reversed(new):
-            send(fmt(c))
-        site["seen"] = ([str(c["id"]) for c in new] + site["seen"])[:1000]
-        print(f"{name}: {len(new)} new")
-
-    json.dump(state, open(SEEN_FILE, "w"))
+            import traceback
+            gh_error(f"{name}: unexpected error: {traceback.format_exc()}")
+        json.dump(state, open(SEEN_FILE, "w"))  # save after every site
 
 
 if __name__ == "__main__":
