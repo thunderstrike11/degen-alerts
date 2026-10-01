@@ -183,10 +183,35 @@ def castle_message(c):
     )
 
 
+# ---------- Winna ----------
+
+def winna_challenges():
+    raw = fetch(
+        "https://daily-challenges-prod.winna.com/public/v1/challenges/active?limit=100&offset=0",
+        {"Accept": "application/json", "Origin": "https://winna.com", "Referer": "https://winna.com/"},
+    )
+    return json.loads(raw)["data"]["challenges"]
+
+
+def winna_message(c):
+    g = c.get("game") or {}
+    ends = (c.get("expirationDate") or "")[:10]
+    return (
+        "🟣 <b>New WINNA challenge</b>\n\n"
+        f"🎰 <b>{e(g.get('name') or c.get('gameIdentifier', '?'))}</b>\n"
+        f"🎯 First to hit <b>{float(c['requiredMultiplier']):,.0f}×</b>\n"
+        f"💵 Min bet: {money(c['minBetAmount'] / 100_000)}\n"
+        f"🏆 Reward: <b>{money(c['rewardAmount'] / 100_000)}</b>\n"
+        + (f"⏳ Ends: {ends}\n" if ends else "")
+        + "\nhttps://winna.com/challenges"
+    )
+
+
 SITES = {
     "degen": ("Degen", degen_challenges, degen_message),
     "rainbet": ("Rainbet", rainbet_challenges, rainbet_message),
     "castle": ("Castle", castle_challenges, castle_message),
+    "winna": ("Winna", winna_challenges, winna_message),
 }
 
 
