@@ -88,9 +88,66 @@ def rainbet_message(c):
     )
 
 
+# ---------- Castle (Socket.IO over websocket) ----------
+
+def castle_challenges(listen_seconds=8):
+    import time
+    import websocket  # pip install websocket-client
+
+    ws = websocket.create_connection(
+        "wss://ws.castle.com/socket.io/?EIO=4&transport=websocket",
+        timeout=15,
+        header=[f"User-Agent: {HEADERS['User-Agent']}"],
+        origin="https://www.castle.com",
+    )
+    found = {}
+    try:
+        ws.recv()                     # 0{"sid":...}  handshake
+        ws.send("40")                 # connect
+        joined = False
+        deadline = time.time() + listen_seconds
+        ws.settimeout(2)
+        while time.time() < deadline:
+            try:
+                msg = ws.recv()
+            except websocket.WebSocketTimeoutException:
+                if found:
+                    break             # got data and it went quiet
+                continue
+            if msg == "2":            # engine.io ping
+                ws.send("3")
+            elif msg.startswith("40") and not joined:
+                ws.send('42["challenges-join"]')
+                joined = True
+            elif msg.startswith('42["challenges-init"'):
+                payload = json.loads(msg[2:])[1]
+                for c in payload.get("challenges", []):
+                    found[c["_id"]] = c
+    finally:
+        ws.close()
+
+    if not found:
+        raise RuntimeError("no challenge data received from Castle")
+    return [c for c in found.values() if c.get("enabled", True) and c.get("status", "live") == "live"]
+
+
+def castle_message(c):
+    g = c.get("game", {})
+    return (
+        "🟠 <b>New CASTLE challenge</b>\n\n"
+        f"🎰 <b>{e(g.get('gameName') or c.get('challengeName', '?'))}</b>\n"
+        f"🎯 First to hit <b>{float(c['multiplierCondition']):,.0f}×</b>\n"
+        f"💵 Min bet: {money(c['minimumBet'] / 1_000_000)}\n"
+        f"🏆 Reward: <b>{money(c['rewardAmount'] / 1_000_000)}</b>\n"
+        f"👤 By: {e(c.get('created', {}).get('user', {}).get('name', '?'))}\n\n"
+        "https://www.castle.com/challenges"
+    )
+
+
 SITES = {
     "degen": ("Degen", degen_challenges, degen_message),
     "rainbet": ("Rainbet", rainbet_challenges, rainbet_message),
+    "castle": ("Castle", castle_challenges, castle_message),
 }
 
 

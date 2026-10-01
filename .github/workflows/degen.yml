@@ -14,7 +14,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      - name: Install websocket library
+        run: pip install websocket-client
 
       - name: Check for new challenges
         run: python check.py
