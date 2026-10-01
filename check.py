@@ -186,11 +186,19 @@ def castle_message(c):
 # ---------- Winna ----------
 
 def winna_challenges():
-    raw = fetch(
-        "https://daily-challenges-prod.winna.com/public/v1/challenges/active?limit=100&offset=0",
-        {"Accept": "application/json", "Origin": "https://winna.com", "Referer": "https://winna.com/"},
-    )
-    return json.loads(raw)["data"]["challenges"]
+    url = "https://daily-challenges-prod.winna.com/public/v1/challenges/active?limit=24&offset=0"
+    attempts = [
+        {"Accept": "application/json"},
+        {"Accept": "application/json, text/plain, */*", "Origin": "https://winna.com", "Referer": "https://winna.com/"},
+        {},
+    ]
+    errors = []
+    for extra in attempts:
+        try:
+            return json.loads(fetch(url, extra))["data"]["challenges"]
+        except urllib.error.HTTPError as err:
+            errors.append(f"{err.code}: {err.read().decode('utf-8', 'replace')[:200]}")
+    raise RuntimeError("Winna refused: " + " || ".join(errors))
 
 
 def winna_message(c):
