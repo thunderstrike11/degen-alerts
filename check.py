@@ -215,11 +215,65 @@ def winna_message(c):
     )
 
 
+# ---------- Xposed (slot provider, challenges played on partner casinos) ----------
+
+def xposed_challenges():
+    page_url = "https://www.xposed.tv/en/challenges"
+    page = fetch(page_url, {"Accept": "text/html"})
+    items = None
+    m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', page, re.S)
+    if m:
+        nd = json.loads(m.group(1))
+        items = (nd.get("props", {}).get("pageProps") or {}).get("challengeItems")
+        if items is None and nd.get("buildId"):
+            data = fetch(f"https://www.xposed.tv/_next/data/{nd['buildId']}/en/challenges.json",
+                         {"Accept": "application/json", "x-nextjs-data": "1", "Referer": page_url})
+            items = json.loads(data)["pageProps"]["challengeItems"]
+    if items is None:
+        raise RuntimeError("challenge data not found on xposed.tv (blocked or page changed)")
+
+    out = []
+    for c in items:
+        if not c.get("isOpen"):
+            continue
+        if c.get("ticketsOpen"):
+            # separate alert when an existing challenge starts taking entries
+            out.append(dict(c, id=f"{c['id']}:tickets", _kind="tickets"))
+        out.append(dict(c, _kind="open"))
+    return out
+
+
+_xposed_announced = set()
+
+
+def xposed_message(c):
+    s = c.get("slot") or {}
+    if c.get("_kind") == "open":
+        _xposed_announced.add(c["id"])
+    elif c["id"].split(":")[0] in _xposed_announced:
+        return None  # brand-new challenge already said "entries open"
+    head = ("🎟 <b>XPOSED challenge now taking entries</b>" if c.get("_kind") == "tickets"
+            else "🟡 <b>New XPOSED challenge</b>")
+    entries = "" if c.get("_kind") == "tickets" else (
+        "✅ Entries open\n" if c.get("ticketsOpen") else "⏸ Entries not open yet\n")
+    return (
+        f"{head}\n\n"
+        f"🎰 <b>{e(s.get('name', '?'))}</b> ({e(s.get('provider') or 'Xposed')})\n"
+        f"🎯 First to hit <b>{float(c['multiplier']):,.0f}×</b>\n"
+        f"💵 Min bet: {money(c['minimum'])}\n"
+        f"🏆 Reward: <b>{e(str(c.get('reward')))}</b>\n"
+        f"{entries}"
+        + (f"🎮 Play: {e(s['url'])}\n" if s.get("url") else "")
+        + "\nhttps://www.xposed.tv/en/challenges"
+    )
+
+
 SITES = {
     "degen": ("Degen", degen_challenges, degen_message),
     "rainbet": ("Rainbet", rainbet_challenges, rainbet_message),
     "castle": ("Castle", castle_challenges, castle_message),
     "winna": ("Winna", winna_challenges, winna_message),
+    "xposed": ("Xposed", xposed_challenges, xposed_message),
 }
 
 
@@ -257,7 +311,7 @@ def check_site(state, key, name, get_list, fmt):
     ids = [cid(c) for c in challenges]
     if site.get("seen") is None:
         # first time watching this site: remember what's there, don't spam
-        if send(f"✅ Now watching {name}: {len(ids)} active challenges. "
+        if send(f"✅ Now watching {name}: {len({i.split(':')[0] for i in ids})} active challenges. "
                 "You'll get a message when a new one is added."):
             site["seen"] = ids
         return
@@ -270,7 +324,7 @@ def check_site(state, key, name, get_list, fmt):
         except Exception as err:
             gh_error(f"{name}: couldn't format challenge {cid(c)}: {err!r}")
             text = f"🆕 New {name} challenge (details unavailable)"
-        if send(text):
+        if text is None or send(text):
             site["seen"].insert(0, cid(c))   # only mark seen once delivered
             sent += 1
     site["seen"] = site["seen"][:1000]
