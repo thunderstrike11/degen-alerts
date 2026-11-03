@@ -268,12 +268,48 @@ def xposed_message(c):
     )
 
 
+# ---------- Lucky.fun ----------
+
+def lucky_challenges():
+    out, page = [], 1
+    while True:
+        raw = fetch(
+            f"https://lucky.fun/api/challenge?page={page}&take=30&status=active",
+            {"Accept": "application/json", "Referer": "https://lucky.fun/challenges"},
+        )
+        j = json.loads(raw)
+        out += j.get("data") or []
+        if page >= int(j.get("totalPages") or 1) or page >= 10:
+            break
+        page += 1
+    return [c for c in out if not c.get("winner")]
+
+
+def lucky_message(c):
+    g = c.get("targetGame") or {}
+    cur = str(c.get("rewardCurrency") or "").upper()
+    amount = float(c["rewardAmount"])
+    # LCK is shown 1:1 as dollars on the site
+    reward = money(amount) if cur in ("LCK", "USD", "USDT", "USDC") else f"{amount:g} {e(cur)}"
+    prov = (g.get("provider") or {}).get("name")
+    return (
+        "🍀 <b>New LUCKY.FUN challenge</b>\n\n"
+        f"🎰 <b>{e(g.get('name') or '?')}</b>" + (f" ({e(prov)})" if prov else "") + "\n"
+        f"🎯 First to hit <b>{float(c['minBetMultiplier']):,.0f}×</b>\n"
+        f"💵 Min bet: {money(c['minBetAmountUsd'])}\n"
+        f"🏆 Reward: <b>{reward}</b>\n"
+        + ("🌏 Asia exclusive\n" if g.get("isAsiaExclusive") else "")
+        + "\nhttps://lucky.fun/challenges"
+    )
+
+
 SITES = {
     "degen": ("Degen", degen_challenges, degen_message),
     "rainbet": ("Rainbet", rainbet_challenges, rainbet_message),
     "castle": ("Castle", castle_challenges, castle_message),
     "winna": ("Winna", winna_challenges, winna_message),
     "xposed": ("Xposed", xposed_challenges, xposed_message),
+    "lucky": ("Lucky.fun", lucky_challenges, lucky_message),
 }
 
 
