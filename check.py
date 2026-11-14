@@ -307,7 +307,6 @@ SITES = {
     "degen": ("Degen", degen_challenges, degen_message),
     "rainbet": ("Rainbet", rainbet_challenges, rainbet_message),
     "castle": ("Castle", castle_challenges, castle_message),
-    "winna": ("Winna", winna_challenges, winna_message),
     "xposed": ("Xposed", xposed_challenges, xposed_message),
     "lucky": ("Lucky.fun", lucky_challenges, lucky_message),
 }
