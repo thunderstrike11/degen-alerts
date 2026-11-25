@@ -367,6 +367,12 @@ def check_site(state, key, name, get_list, fmt):
 
 
 def main():
+    if os.environ.get("TEST_MESSAGE") == "true":
+        if send("✅ <b>Test message</b>: the challenge bot can reach you. "
+                "You'll get alerts here when new challenges appear on " + ", ".join(n for n, _, _ in SITES.values()) + "."):
+            print("Test message sent")
+        else:
+            gh_error("Test message could not be sent (check TELEGRAM_TOKEN / TELEGRAM_CHAT_ID)")
     state = load_state()
     for key, (name, get_list, fmt) in SITES.items():
         try:
